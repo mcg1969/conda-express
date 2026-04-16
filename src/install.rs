@@ -609,6 +609,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_aau_token_string_contains_expected_tokens() {
+        let config = anaconda_anon_usage::Config {
+            prefix: Some(format!("cx/{}", env!("CARGO_PKG_VERSION"))),
+            ..Default::default()
+        };
+        let ua = anaconda_anon_usage::token_string(&config);
+        assert!(
+            ua.starts_with(&format!("cx/{}", env!("CARGO_PKG_VERSION"))),
+            "should start with cx version prefix, got: {ua}"
+        );
+        assert!(ua.contains("aau/"), "should contain aau version, got: {ua}");
+        assert!(
+            ua.contains(" c/"),
+            "should contain client token, got: {ua}"
+        );
+        assert!(
+            ua.contains(" s/"),
+            "should contain session token, got: {ua}"
+        );
+    }
+
+    #[test]
+    fn test_make_download_client_succeeds() {
+        let client = make_download_client();
+        assert!(client.is_ok(), "make_download_client should succeed");
+    }
+
     fn make_record_with_url(filename: &str) -> RepoDataRecord {
         use rattler_conda_types::{
             PackageName, VersionWithSource,

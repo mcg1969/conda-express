@@ -36,6 +36,7 @@ fn main() -> miette::Result<()> {
 
 async fn async_main() -> miette::Result<()> {
     init_tracing()?;
+    let _aau = anaconda_anon_usage::init();
 
     let raw_args: Vec<String> = env::args().collect();
     let first_arg = raw_args.get(1).map(|s| s.as_str());

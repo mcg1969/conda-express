@@ -437,8 +437,15 @@ pub(crate) fn parse_specs(specs: &[String]) -> miette::Result<Vec<MatchSpec>> {
 }
 
 fn make_download_client() -> miette::Result<reqwest_middleware::ClientWithMiddleware> {
+    let aau_config = anaconda_anon_usage::Config {
+        prefix: Some(format!("cx/{}", env!("CARGO_PKG_VERSION"))),
+        ..Default::default()
+    };
+    let ua = anaconda_anon_usage::token_string(&aau_config);
+
     let raw = reqwest::Client::builder()
         .no_gzip()
+        .user_agent(&ua)
         .build()
         .expect("failed to create HTTP client");
 
@@ -600,6 +607,110 @@ mod tests {
             assert!(name.ends_with(".conda") || name.ends_with(".tar.bz2"));
             assert!(path.exists());
         }
+    }
+
+    #[test]
+    fn test_aau_token_string_contains_expected_tokens() {
+        let config = anaconda_anon_usage::Config {
+            prefix: Some(format!("cx/{}", env!("CARGO_PKG_VERSION"))),
+            ..Default::default()
+        };
+        let ua = anaconda_anon_usage::token_string(&config);
+        assert!(
+            ua.starts_with(&format!("cx/{}", env!("CARGO_PKG_VERSION"))),
+            "should start with cx version prefix, got: {ua}"
+        );
+        assert!(ua.contains("aau/"), "should contain aau version, got: {ua}");
+        assert!(
+            ua.contains(" c/"),
+            "should contain client token, got: {ua}"
+        );
+        assert!(
+            ua.contains(" s/"),
+            "should contain session token, got: {ua}"
+        );
+    }
+
+    #[test]
+    fn test_make_download_client_succeeds() {
+        let client = make_download_client();
+        assert!(client.is_ok(), "make_download_client should succeed");
+    }
+
+    async fn capture_user_agent() -> String {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let n = stream.read(&mut buf).await.unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_string()
+        });
+
+        let client = make_download_client().unwrap();
+        let _ = client.get(format!("http://{addr}/test")).send().await;
+
+        let raw_request = server.await.unwrap();
+        let ua_line = raw_request
+            .lines()
+            .find(|l| l.to_lowercase().starts_with("user-agent:"))
+            .expect("request should contain a User-Agent header");
+        ua_line.split_once(':').unwrap().1.trim().to_string()
+    }
+
+    fn assert_base_tokens(ua: &str) {
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(
+            ua.starts_with(&format!("cx/{version}")),
+            "User-Agent should start with cx/{version}, got: {ua}"
+        );
+        assert!(ua.contains("aau/"), "should contain aau/, got: {ua}");
+        assert!(ua.contains(" c/"), "should contain client token, got: {ua}");
+        assert!(ua.contains(" s/"), "should contain session token, got: {ua}");
+    }
+
+    fn extract_env_token(ua: &str) -> Option<&str> {
+        ua.split_whitespace()
+            .find(|t| t.starts_with("e/"))
+            .map(|t| t.strip_prefix("e/").unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_download_client_sends_aau_user_agent() {
+        // Phase 1: no env prefix set — e/ token may be absent or come from
+        // $CONDA_PREFIX if it happens to be set in the test environment.
+        let ua_before = capture_user_agent().await;
+        assert_base_tokens(&ua_before);
+        let env_token_before = extract_env_token(&ua_before);
+
+        // Phase 2: set an env prefix — e/ token should appear and differ
+        // from whatever was there before (if anything).
+        let tmp1 = tempfile::TempDir::new().unwrap();
+        anaconda_anon_usage::set_env_prefix(tmp1.path().to_string_lossy());
+        let ua_first = capture_user_agent().await;
+        assert_base_tokens(&ua_first);
+        let env_token_first =
+            extract_env_token(&ua_first).expect("e/ token should be present after set_env_prefix");
+        assert!(
+            env_token_before != Some(env_token_first),
+            "e/ token should change after set_env_prefix, before={env_token_before:?} after={env_token_first}"
+        );
+
+        // Phase 3: switch to a different prefix — e/ token should change again.
+        let tmp2 = tempfile::TempDir::new().unwrap();
+        anaconda_anon_usage::set_env_prefix(tmp2.path().to_string_lossy());
+        let ua_second = capture_user_agent().await;
+        assert_base_tokens(&ua_second);
+        let env_token_second = extract_env_token(&ua_second)
+            .expect("e/ token should be present after second set_env_prefix");
+        assert_ne!(
+            env_token_first, env_token_second,
+            "e/ token should change when env prefix changes"
+        );
     }
 
     fn make_record_with_url(filename: &str) -> RepoDataRecord {

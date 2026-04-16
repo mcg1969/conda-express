@@ -137,6 +137,8 @@ pub(crate) async fn bootstrap(
         }
     };
 
+    anaconda_anon_usage::set_env_prefix(prefix.to_string_lossy());
+
     if let Some(ref payload_dir) = payload {
         let content = lock_content.ok_or_else(|| {
             miette::miette!("--payload requires a lockfile (embedded or --lockfile)")

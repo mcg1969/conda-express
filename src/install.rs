@@ -437,8 +437,15 @@ pub(crate) fn parse_specs(specs: &[String]) -> miette::Result<Vec<MatchSpec>> {
 }
 
 fn make_download_client() -> miette::Result<reqwest_middleware::ClientWithMiddleware> {
+    let aau_config = anaconda_anon_usage::Config {
+        prefix: Some(format!("cx/{}", env!("CARGO_PKG_VERSION"))),
+        ..Default::default()
+    };
+    let ua = anaconda_anon_usage::token_string(&aau_config);
+
     let raw = reqwest::Client::builder()
         .no_gzip()
+        .user_agent(&ua)
         .build()
         .expect("failed to create HTTP client");
 
